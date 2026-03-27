@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.venv
+env/
+ENV/
+build/
+dist/
+*.spec
+
+# macOS
+.DS_Store
+
+# User data
+*_thumb/
+2026-*/
+CapCut_*.srt
+!capcut_utils.py

@@ -15,7 +15,8 @@ import capcut_utils
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
-BBDOWN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "BBDown")
+BBDOWN_NAME = "BBDown.exe" if os.name == "nt" else "BBDown"
+BBDOWN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), BBDOWN_NAME)
 
 # ── BBDown quality map  (English UI → BBDown Chinese flag) ─────────────
 QUALITY_BBDOWN_MAP = {
@@ -417,7 +418,7 @@ class VideoDownloaderApp(ctk.CTk):
             else:
                 self._run_ytdlp(url, folder)
         except Exception as e:
-            self._ui(lambda: self._on_error(f"Error: {e}"))
+            self._ui(lambda e=e: self._on_error(f"Error: {e}"))
 
     def _thumb_worker(self, url):
         try:
@@ -440,7 +441,7 @@ class VideoDownloaderApp(ctk.CTk):
             else:
                 self._ui(lambda: self._on_error(f"Failed to get thumbnail.\n{err}"))
         except Exception as e:
-            self._ui(lambda: self._on_error(f"Error: {e}"))
+            self._ui(lambda e=e: self._on_error(f"Error: {e}"))
 
     def _capcut_worker(self, json_path):
         try:
@@ -468,7 +469,7 @@ class VideoDownloaderApp(ctk.CTk):
             else:
                 self._ui(lambda: self._on_error(f"Extraction failed: {result}"))
         except Exception as e:
-            self._ui(lambda: self._on_error(f"Error: {e}"))
+            self._ui(lambda e=e: self._on_error(f"Error: {e}"))
 
     # ── Bilibili via BBDown ─────────────────────────────────
     def _run_bilibili(self, url, folder):
@@ -527,66 +528,87 @@ class VideoDownloaderApp(ctk.CTk):
     # ── Process runner (background thread) ──────────────────
     def _run_cmd(self, cmd, line_parser=None):
         """
-        Run command using a pseudo-terminal (pty) to force programs like BBDown
-        to output their real-time progress bars (which they hide if not on a TTY).
+        Run command and capture output. 
+        On Unix, uses pty to force progress bars.
+        On Windows, uses subprocess.PIPE for basic execution.
         """
-        import pty
-        import select
-
-        master_fd, slave_fd = pty.openpty()
-        process = subprocess.Popen(
-            cmd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True
-        )
-        os.close(slave_fd)
-
-        last_err = ""
-        buf = b""
-
-        while process.poll() is None:
-            # Wait for output or process end
-            r, _, _ = select.select([master_fd], [], [], 0.1)
-            if not r:
-                continue
-
+        if os.name != 'nt':
             try:
-                chunk = os.read(master_fd, 512)
-            except OSError:
-                break
-            if not chunk:
-                break
-            
-            buf += chunk
-            parts = re.split(rb'[\r\n]', buf)
-            buf = parts[-1]
-            for raw in parts[:-1]:
-                try:
-                    line = raw.decode("utf-8", errors="replace").strip()
-                except Exception:
-                    continue
-                if not line:
-                    continue
-                
-                # Capture potential error line
-                if "Error" in line or "error" in line or "错误" in line or "failed" in line:
-                    if len(line) < 100: last_err = line
-                
-                if line_parser:
-                    line_parser(line)
+                import pty
+                import select
+                master_fd, slave_fd = pty.openpty()
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    close_fds=True
+                )
+                os.close(slave_fd)
 
-        # Flush tail
-        if buf:
-            try:
-                line = buf.decode("utf-8", errors="replace").strip()
-                if line and line_parser:
-                    line_parser(line)
-            except Exception:
+                last_err = ""
+                buf = b""
+
+                while process.poll() is None:
+                    r, _, _ = select.select([master_fd], [], [], 0.1)
+                    if not r: continue
+                    try:
+                        chunk = os.read(master_fd, 512)
+                    except OSError: break
+                    if not chunk: break
+                    
+                    buf += chunk
+                    parts = re.split(rb'[\r\n]', buf)
+                    buf = parts[-1]
+                    for raw in parts[:-1]:
+                        try:
+                            line = raw.decode("utf-8", errors="replace").strip()
+                        except Exception: continue
+                        if not line: continue
+                        if any(x in line.lower() for x in ["error", "failed", "错误"]):
+                            if len(line) < 100: last_err = line
+                        if line_parser: line_parser(line)
+
+                # Flush tail
+                if buf:
+                    try:
+                        line = buf.decode("utf-8", errors="replace").strip()
+                        if line and line_parser: line_parser(line)
+                    except Exception: pass
+
+                process.wait()
+                os.close(master_fd)
+                return (process.returncode == 0), last_err
+            except ImportError:
+                # Fallback to standard subprocess if pty is missing
                 pass
 
+        # Windows or Fallback approach
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+        last_err = ""
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            
+            if any(x in line.lower() for x in ["error", "failed", "错误"]):
+                if len(line) < 100: last_err = line
+            
+            if line_parser:
+                line_parser(line)
+
         process.wait()
-        os.close(master_fd)
         return (process.returncode == 0), last_err
 
     # ── Line parsers ─────────────────────────────────────────

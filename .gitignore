@@ -1,0 +1,17 @@
+venv/
+*.pyc
+__pycache__/
+.DS_Store
+.idea/
+.vscode/
+*.log
+srt_capcut/
+*.mp4
+*.mp3
+*.wav
+*.m4a
+*.jpg
+*.png
+# Keep BBDown executable but usually we don't commit it if it can be downloaded.
+# However, the user might want it there for convenience as it was in the dir.
+# I'll keep it for now unless it's too big (23MB). GitHub allows up to 100MB per file.
